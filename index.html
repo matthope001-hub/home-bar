@@ -69,7 +69,7 @@ html{-webkit-tap-highlight-color:transparent}button,select,label{touch-action:ma
       <select name="type" class="inp"><option>alcohol</option><option>mixer</option><option>garnish</option><option>ice</option><option>bitters</option></select>
       <input name="brand" class="inp" placeholder="Brand">
       <input name="abv" class="inp" type="number" step="0.1" min="0" max="100" placeholder="ABV %">
-      <input name="volumeMl" class="inp" type="number" min="0" placeholder="Volume (ml)">
+      <div class="flex gap-1"><input name="vol" class="inp" type="number" step="any" min="0" placeholder="Size"><select name="volUnit" class="inp !w-16 !px-1"><option>ml</option><option>L</option></select></div>
       <input name="upc" class="inp" placeholder="UPC/EAN (optional)">
       <button class="btn col-span-2">Save</button>
       <p class="text-xs opacity-60 col-span-2">Choosing an existing item adds this barcode to its UPC list (e.g. 750 ml vs 1 L).</p>
@@ -270,7 +270,7 @@ function evalR(r){const res=r.ingredients.map(g=>({...g,...check(g)}));return{re
 const stCol={full:'text-emerald-500',low:'text-amber-500',empty:'text-red-500'};
 const row=i=>`<li class="flex items-center gap-2 py-2 border-b border-stone-200 dark:border-stone-800 last:border-0">
  <div class="flex-1 min-w-0 cursor-pointer" data-e="${esc(i.id)}" title="Tap to edit"><div class="font-medium truncate">${esc(i.name)} <span class="opacity-40 text-xs">✎</span></div>
- <div class="text-xs opacity-60 truncate">${esc(i.category)}${i.brand?' · '+esc(i.brand):''}${i.abv?' · '+i.abv+'%':''}${i.volumeMl?' · '+i.volumeMl+' ml':''}${i.upc?.length?' · '+i.upc.length+' UPC':''}</div></div>
+ <div class="text-xs opacity-60 truncate">${esc(i.category)}${i.brand?' · '+esc(i.brand):''}${i.abv?' · '+i.abv+'%':''}${i.volumeMl?' · '+fmtVol(i.volumeMl):''}${i.upc?.length?' · '+i.upc.length+' UPC':''}</div></div>
  <select data-s="${esc(i.id)}" class="inp !w-20 !px-1 ${stCol[i.stockLevel]}">${['full','low','empty'].map(s=>`<option value="${s}" ${i.stockLevel===s?'selected':''}>${s}</option>`).join('')}</select>
  <button data-r="${esc(i.id)}" class="btn2 !px-2 !py-0.5" title="Remove from bar">↓</button>
  <button data-x="${esc(i.id)}" class="text-red-500 px-1" title="Delete from catalog">✕</button></li>`;
@@ -283,6 +283,10 @@ function renderBar(){
   $('#addForm').link.innerHTML='<option value="">— New item —</option>'+items.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(i=>`<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('');
 }
 const byId=id=>items.find(i=>i.id===id);
+// sizes are stored in ml (volumeMl) but shown/entered in whichever unit fits: 1 L and up → litres (pop, 1.14 L handles), below → ml (750 ml bottles, 355 ml cans)
+const toMl=(v,u)=>v?Math.round(+v*(u==='L'?1000:1)):undefined;
+const fmtVol=ml=>ml>=1000?+(ml/1000).toFixed(3)+' L':ml+' ml';
+function setVol(f,ml){if(!ml)return;const L=ml>=1000;f.vol.value=L?+(ml/1000).toFixed(3):ml;f.volUnit.value=L?'L':'ml';}
 $('#bar').addEventListener('click',e=>{
   const ed=e.target.closest('[data-e]');if(ed)return openEdit(ed.dataset.e);
   const d=e.target.dataset;
@@ -295,14 +299,14 @@ $('#bar').addEventListener('change',e=>{const id=e.target.dataset.s;if(id){const
 $('#addForm').onsubmit=e=>{
   e.preventDefault();const d=Object.fromEntries(new FormData(e.target)), upc=d.upc.trim();
   if(d.editId){const i=byId(d.editId);if(!d.name||!d.category)return msg('Name and category are required.');
-    Object.assign(i,{name:d.name,category:d.category.trim(),type:d.type,brand:d.brand||undefined,abv:d.abv?+d.abv:undefined,volumeMl:d.volumeMl?+d.volumeMl:undefined});
+    Object.assign(i,{name:d.name,category:d.category.trim(),type:d.type,brand:d.brand||undefined,abv:d.abv?+d.abv:undefined,volumeMl:toMl(d.vol,d.volUnit)});
     if(upc&&!i.upc.includes(upc))i.upc.push(upc);msg(`Updated ${i.name}.`);}
   else if(d.link){const i=byId(d.link);if(upc&&!i.upc.includes(upc))i.upc.push(upc);i.isBarstocked=true;i.stockLevel='full';msg(`Linked ${upc||'item'} → ${i.name}.`);}
   else{
     if(!d.name||!d.category)return msg('Name and category are required for a new item.');
     let id=slug((d.category+'-'+(d.brand||d.name))),n=2;while(byId(id))id=slug(d.category+'-'+(d.brand||d.name))+'-'+n++;
     items.push({id,name:d.name,upc:upc?[upc]:[],type:d.type,category:d.category.trim(),brand:d.brand||undefined,abv:d.abv?+d.abv:undefined,
-      volumeMl:d.volumeMl?+d.volumeMl:undefined,isBarstocked:true,stockLevel:'full',seasons:['all-year'],validSubstitutes:[]});
+      volumeMl:toMl(d.vol,d.volUnit),isBarstocked:true,stockLevel:'full',seasons:['all-year'],validSubstitutes:[]});
     msg(`Saved ${d.name}${upc?' — barcode remembered':''}.`);
   }
   resetForm();closeM();save();renderAll();
@@ -310,7 +314,7 @@ $('#addForm').onsubmit=e=>{
 $('#openAdd').onclick=()=>{resetForm();openM();};
 function resetForm(title='➕ Add item / map a barcode'){const f=$('#addForm');f.reset();f.editId.value='';f.link.classList.remove('hidden');$('#addTitle').textContent=title;}
 function openEdit(id){const i=byId(id),f=$('#addForm');resetForm('✎ Edit item');f.editId.value=id;f.link.classList.add('hidden');
-  ['name','category','type','brand','abv','volumeMl'].forEach(k=>f[k].value=i[k]??'');openM();f.type.focus();}
+  ['name','category','type','brand','abv'].forEach(k=>f[k].value=i[k]??'');setVol(f,i.volumeMl);openM();f.type.focus();}
 $('#closeAdd').onclick=closeM;
 $('#addBox').onclick=e=>{if(e.target.id==='addBox')closeM();};
 
@@ -342,7 +346,7 @@ async function handleUPC(code){
     if(abv)f.abv.value=abv;
     f.type.value=cat==='Angostura Bitters'||tags.some(t=>t.includes('bitters'))?'bitters':(abv||tags.some(t=>t.includes('alcoholic beverages')&&!t.includes('non-alcoholic')))?'alcohol':'mixer';
     if(cat)f.category.value=cat;
-    const q=String(p.quantity||'').match(/([\d.]+)\s*(ml|cl|l)\b/i);if(q)f.volumeMl.value=Math.round(+q[1]*({ml:1,cl:10,l:1000}[lc(q[2])]));
+    const q=String(p.quantity||'').match(/([\d.]+)\s*(ml|cl|l)\b/i);if(q)setVol(f,Math.round(+q[1]*({ml:1,cl:10,l:1000}[lc(q[2])])));
     // pre-select an existing catalog item with the same category + brand so the barcode links instead of duplicating
     const match=cat&&items.find(i=>lc(i.category)===lc(cat)&&brand&&(lc(i.brand).includes(lc(brand))||lc(brand).includes(lc(i.brand||'~'))));
     if(match)f.link.value=match.id;
