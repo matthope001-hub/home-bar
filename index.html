@@ -60,8 +60,9 @@ html{-webkit-tap-highlight-color:transparent}button,select,label{touch-action:ma
 
   <div id="addBox" class="hidden fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center sm:p-4">
    <div class="card w-full max-w-md !mb-0 max-h-[90vh] overflow-y-auto rounded-b-none sm:rounded-xl safe-b">
-    <div class="flex justify-between items-center"><h2 class="font-semibold">➕ Add item / map a barcode</h2><button id="closeAdd" class="btn2 !px-2 !py-0.5">✕</button></div>
+    <div class="flex justify-between items-center"><h2 id="addTitle" class="font-semibold">➕ Add item / map a barcode</h2><button id="closeAdd" class="btn2 !px-2 !py-0.5">✕</button></div>
     <form id="addForm" class="grid grid-cols-2 gap-2 mt-3">
+      <input type="hidden" name="editId">
       <select name="link" class="inp col-span-2"><option value="">— New item —</option></select>
       <input name="name" class="inp col-span-2" placeholder="Name (e.g. Maker's Mark Bourbon)">
       <input name="category" class="inp" list="cats" placeholder="Category (e.g. Bourbon)">
@@ -268,7 +269,7 @@ function evalR(r){const res=r.ingredients.map(g=>({...g,...check(g)}));return{re
 /* ---------- INVENTORY UI ---------- */
 const stCol={full:'text-emerald-500',low:'text-amber-500',empty:'text-red-500'};
 const row=i=>`<li class="flex items-center gap-2 py-2 border-b border-stone-200 dark:border-stone-800 last:border-0">
- <div class="flex-1 min-w-0"><div class="font-medium truncate">${esc(i.name)}</div>
+ <div class="flex-1 min-w-0 cursor-pointer" data-e="${esc(i.id)}" title="Tap to edit"><div class="font-medium truncate">${esc(i.name)} <span class="opacity-40 text-xs">✎</span></div>
  <div class="text-xs opacity-60 truncate">${esc(i.category)}${i.brand?' · '+esc(i.brand):''}${i.abv?' · '+i.abv+'%':''}${i.volumeMl?' · '+i.volumeMl+' ml':''}${i.upc?.length?' · '+i.upc.length+' UPC':''}</div></div>
  <select data-s="${esc(i.id)}" class="inp !w-20 !px-1 ${stCol[i.stockLevel]}">${['full','low','empty'].map(s=>`<option value="${s}" ${i.stockLevel===s?'selected':''}>${s}</option>`).join('')}</select>
  <button data-r="${esc(i.id)}" class="btn2 !px-2 !py-0.5" title="Remove from bar">↓</button>
@@ -283,6 +284,7 @@ function renderBar(){
 }
 const byId=id=>items.find(i=>i.id===id);
 $('#bar').addEventListener('click',e=>{
+  const ed=e.target.closest('[data-e]');if(ed)return openEdit(ed.dataset.e);
   const d=e.target.dataset;
   if(d.a){const i=byId(d.a);i.isBarstocked=true;i.stockLevel='full';msg(`Added ${i.name}.`);}
   else if(d.r){byId(d.r).isBarstocked=false;}
@@ -292,7 +294,10 @@ $('#bar').addEventListener('click',e=>{
 $('#bar').addEventListener('change',e=>{const id=e.target.dataset.s;if(id){const i=byId(id);i.stockLevel=e.target.value;save();renderAll();}});
 $('#addForm').onsubmit=e=>{
   e.preventDefault();const d=Object.fromEntries(new FormData(e.target)), upc=d.upc.trim();
-  if(d.link){const i=byId(d.link);if(upc&&!i.upc.includes(upc))i.upc.push(upc);i.isBarstocked=true;i.stockLevel='full';msg(`Linked ${upc||'item'} → ${i.name}.`);}
+  if(d.editId){const i=byId(d.editId);if(!d.name||!d.category)return msg('Name and category are required.');
+    Object.assign(i,{name:d.name,category:d.category.trim(),type:d.type,brand:d.brand||undefined,abv:d.abv?+d.abv:undefined,volumeMl:d.volumeMl?+d.volumeMl:undefined});
+    if(upc&&!i.upc.includes(upc))i.upc.push(upc);msg(`Updated ${i.name}.`);}
+  else if(d.link){const i=byId(d.link);if(upc&&!i.upc.includes(upc))i.upc.push(upc);i.isBarstocked=true;i.stockLevel='full';msg(`Linked ${upc||'item'} → ${i.name}.`);}
   else{
     if(!d.name||!d.category)return msg('Name and category are required for a new item.');
     let id=slug((d.category+'-'+(d.brand||d.name))),n=2;while(byId(id))id=slug(d.category+'-'+(d.brand||d.name))+'-'+n++;
@@ -300,9 +305,12 @@ $('#addForm').onsubmit=e=>{
       volumeMl:d.volumeMl?+d.volumeMl:undefined,isBarstocked:true,stockLevel:'full',seasons:['all-year'],validSubstitutes:[]});
     msg(`Saved ${d.name}${upc?' — barcode remembered':''}.`);
   }
-  e.target.reset();closeM();save();renderAll();
+  resetForm();closeM();save();renderAll();
 };
-$('#openAdd').onclick=()=>{$('#addForm').reset();openM();};
+$('#openAdd').onclick=()=>{resetForm();openM();};
+function resetForm(title='➕ Add item / map a barcode'){const f=$('#addForm');f.reset();f.editId.value='';f.link.classList.remove('hidden');$('#addTitle').textContent=title;}
+function openEdit(id){const i=byId(id),f=$('#addForm');resetForm('✎ Edit item');f.editId.value=id;f.link.classList.add('hidden');
+  ['name','category','type','brand','abv','volumeMl'].forEach(k=>f[k].value=i[k]??'');openM();f.type.focus();}
 $('#closeAdd').onclick=closeM;
 $('#addBox').onclick=e=>{if(e.target.id==='addBox')closeM();};
 
@@ -325,7 +333,7 @@ async function handleUPC(code){
   if(hit){hit.isBarstocked=true;hit.stockLevel='full';save();renderAll();return msg(`✓ ${hit.name} is in your bar.`);}
   msg(`Looking up ${code}…`);let p=null;
   try{const r=await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}?fields=${OFF_FIELDS}`);const j=await r.json();if(j.status===1)p=j.product;}catch{}
-  const f=$('#addForm');f.reset();f.upc.value=code;
+  const f=$('#addForm');resetForm();f.upc.value=code;
   if(p){
     const name=p.product_name||p.product_name_en||'', brand=(p.brands||'').split(',')[0].trim(), n=p.nutriments||{};
     const abv=n.alcohol??n.alcohol_100g??n.alcohol_value, tags=(p.categories_tags_en||[]).map(lc);
