@@ -338,7 +338,7 @@ async function handleUPC(code){
   const norm=c=>c.replace(/^0+/,''), hit=items.find(i=>i.upc?.some(u=>norm(u)===norm(code)));
   if(hit){hit.isBarstocked=true;hit.stockLevel='full';save();renderAll();return msg(`✓ ${hit.name} is in your bar.`);}
   msg(`Looking up ${code}…`);
-  const p=await lookupProduct(code), f=$('#addForm');resetForm();f.upc.value=code;
+  const p=await lookupProduct(code,n=>msg(`Searching ${n}…`)), f=$('#addForm');resetForm();f.upc.value=code;
   if(p){
     const cat=mapCategory(p.name,p.tags);
     p.brand||=guessBrand(p.name);p.name=cleanName(p.name)||p.name;
@@ -358,7 +358,6 @@ async function handleUPC(code){
   } else msg('Not found online — enter the details once or link it to an existing item; it\'ll be remembered.');
   openM();f.link.focus();
 }
-// Lookup chain: Open Food Facts first, then UPCitemdb (free trial, ~100 lookups/day) to fill whatever is still missing.
 const SPIRIT_CATS=new Set(['White Rum','Dark Rum','Bourbon','Rye Whiskey','Scotch','Islay Scotch','Irish Whiskey','Tequila','Gin','Vodka','Orange Liqueur','Coffee Liqueur','Campari','Aperol','Sweet Vermouth','Dry Vermouth','Prosecco']);
 const parseMl=t=>{const q=String(t||'').match(/([\d.]+)\s*(ml|cl|l|litres?|liters?)\b/i);return q?Math.round(+q[1]*({ml:1,cl:10}[lc(q[2])]||1000)):undefined;};
 // typical ABV by category, used only when no source gives one (shown to the user as an estimate)
@@ -377,20 +376,43 @@ function guessBrand(name){
   return b.length&&b.length<w.length?b.join(' '):'';
 }
 const parseAbv=t=>{const m=String(t||'').match(/(\d{1,2}(?:\.\d)?)\s*%/);return m?+m[1]:undefined;};
-async function lookupProduct(code){
+// Free lookup chain: each source only runs if the card is still incomplete (name, brand, size, category, and ABV for alcohol).
+const getJ=async u=>(await fetch(u)).json();
+const isAlc=o=>{const c=mapCategory(o.name,o.tags);return SPIRIT_CATS.has(c)||c==='Angostura Bitters'||o.tags.some(t=>/alcoholic beverage|spirit|liquor|liqueur|wine/.test(t)&&!t.includes('non-alcoholic'));};
+const cardDone=o=>!!(o.name&&o.brand&&o.ml&&mapCategory(o.name,o.tags)&&(o.abv!=null||!isAlc(o)));
+function derive(o){if(o.name){o.brand||=guessBrand(o.name);o.ml||=parseMl(o.name);o.abv??=parseAbv(o.name);}}
+const offLike=host=>async(code,o)=>{const j=await getJ(`https://${host}/api/v2/product/${code}?fields=${OFF_FIELDS}`);if(j.status!==1)return;
+  const p=j.product,n=p.nutriments||{};o.name||=p.product_name||p.product_name_en||'';o.brand||=(p.brands||'').split(',')[0].trim();
+  o.abv??=n.alcohol??n.alcohol_100g??n.alcohol_value;o.ml||=parseMl(p.quantity);o.tags.push(...(p.categories_tags_en||[]).map(lc));o.img||=p.image_front_small_url;return true;};
+async function upcItemDb(code,o){const it=(await getJ(`https://api.upcitemdb.com/prod/trial/lookup?upc=${code}`)).items?.[0];if(!it)return;
+  o.name||=it.title||'';o.brand||=it.brand||'';o.ml||=parseMl(it.size)||parseMl(it.title);o.tags.push(...String(it.category||'').split('>').map(lc));o.img||=it.images?.[0];return true;}
+// Wikidata: barcode (GTIN) first, then the product name / brand; only accepts an entry whose name appears in the product title
+async function wikidata(code,o){
+  const W='https://www.wikidata.org/w/api.php?origin=*&format=json&';let ids=[];
+  const g=[code,code.length===12?'0'+code:''].filter(Boolean).map(c=>`"${c}"`).join(' ');
+  try{const j=await getJ('https://query.wikidata.org/sparql?format=json&query='+encodeURIComponent(`SELECT ?i WHERE{VALUES ?g{${g}} ?i wdt:P3962 ?g}LIMIT 1`));ids=j.results.bindings.map(b=>b.i.value.split('/').pop());}catch{}
+  const byCode=ids.length>0;
+  if(!byCode&&o.name)for(const t of [cleanName(o.name),o.brand].filter(Boolean)){ids=((await getJ(W+'action=wbsearchentities&language=en&limit=7&search='+encodeURIComponent(t))).search||[]).map(x=>x.id);if(ids.length)break;}
+  if(!ids.length)return;
+  const ents=(await getJ(W+'action=wbgetentities&props=labels|claims&languages=en&ids='+ids.join('|'))).entities||{};
+  const ent=ids.map(i=>ents[i]).find(e=>{const L=plain(e?.labels?.en?.value||'');return e?.claims?.P2665&&L&&(byCode||plain(o.name).includes(L));});
+  if(!ent)return;
+  let v=+ent.claims.P2665[0].mainsnak.datavalue?.value?.amount;if(isNaN(v))return;if(v>0&&v<1)v*=100;
+  o.abv??=+v.toFixed(1);o.name||=ent.labels.en.value;return true;
+}
+// TheCocktailDB ingredient entries: type (e.g. "Gin"), alcoholic yes/no and sometimes ABV — searched by brand, then by category
+const CDB_NAMES={'White Rum':'Light rum','Dark Rum':'Dark rum','Orange Liqueur':'Triple sec','Islay Scotch':'Scotch','Rye Whiskey':'Rye whiskey','Irish Whiskey':'Irish whiskey'};
+async function cocktailDb(code,o){
+  const cat=mapCategory(o.name,o.tags);
+  for(const t of [o.brand,CDB_NAMES[cat]||cat].filter(Boolean)){
+    const ing=(await getJ('https://www.thecocktaildb.com/api/json/v1/1/search.php?i='+encodeURIComponent(t))).ingredients?.[0];if(!ing)continue;
+    if(ing.strType)o.tags.push(lc(ing.strType));if(ing.strAlcohol==='Yes')o.tags.push('alcoholic beverages');if(ing.strABV)o.abv??=+ing.strABV;return true;}
+}
+const SOURCES=[['Open Food Facts',offLike('world.openfoodfacts.org')],['Open Products Facts',offLike('world.openproductsfacts.org')],['UPCitemdb',upcItemDb],['Wikidata',wikidata],['TheCocktailDB',cocktailDb]];
+async function lookupProduct(code,onStep){
   const o={name:'',brand:'',tags:[],src:[]};
-  try{const j=await (await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}?fields=${OFF_FIELDS}`)).json();
-    if(j.status===1){const p=j.product,n=p.nutriments||{};
-      o.name=p.product_name||p.product_name_en||'';o.brand=(p.brands||'').split(',')[0].trim();
-      o.abv=n.alcohol??n.alcohol_100g??n.alcohol_value;o.ml=parseMl(p.quantity);o.tags=(p.categories_tags_en||[]).map(lc);
-      o.img=p.image_front_small_url;if(o.name)o.src.push('Open Food Facts');}}catch{}
-  if(!o.name||!o.ml||!o.brand){
-    try{const it=(await (await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${code}`)).json()).items?.[0];
-      if(it){o.name||=it.title||'';o.brand||=it.brand||'';o.ml||=parseMl(it.size)||parseMl(it.title);
-        o.tags.push(...String(it.category||'').split('>').map(lc));o.img||=it.images?.[0];o.src.push('UPCitemdb');}}catch{}}
-  if(!o.name)return null;
-  o.ml||=parseMl(o.name);o.abv??=parseAbv(o.name);o.src=o.src.join(' + ');
-  return o;
+  for(const[n,fn]of SOURCES){if(cardDone(o))break;onStep?.(n);try{if(await fn(code,o))o.src.push(n);}catch{}derive(o);}
+  if(!o.name)return null;o.src=o.src.join(' → ');return o;
 }
 // Open Food Facts: only request fields the app uses (smaller response on mobile)
 const OFF_FIELDS='product_name,product_name_en,brands,quantity,nutriments,categories_tags_en,image_front_small_url';
