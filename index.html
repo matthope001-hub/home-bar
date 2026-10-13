@@ -96,6 +96,10 @@ html{-webkit-tap-highlight-color:transparent}button,select,label{touch-action:ma
     <div class="flex gap-2 overflow-x-auto no-sb -mx-1 px-1" id="seasons"></div>
     <p id="seasonNote" class="text-sm mt-2 opacity-80"></p>
   </div>
+  <div class="card"><div class="flex flex-wrap gap-2 items-center">
+    <input id="rSearch" class="inp flex-1 min-w-[160px]" placeholder="Search cocktails or ingredients">
+    <button id="impBa" class="btn2">⬇ Bar Assistant recipes</button><button id="impCdb" class="btn2">⬇ Import 100s of cocktails</button><button id="rmCdb" class="btn2 hidden">Remove imported</button></div>
+    <p id="impMsg" class="text-xs mt-2 opacity-70"></p></div>
   <div class="flex gap-2 mb-4 overflow-x-auto no-sb" id="filters"></div>
   <div id="recipes" class="grid md:grid-cols-2 gap-4"></div>
   <details class="card mt-4">
@@ -242,7 +246,7 @@ function daysHTML(){
   return u.map(x=>{const ev=x.rs.map(r=>({r,m:evalR(r).missing})),can=ev.filter(e=>!e.m.length),one=ev.filter(e=>e.m.length===1);
     return `<div class="py-2 border-b border-stone-200 dark:border-stone-800 last:border-0">
     <div class="font-semibold">${x.diff?`In ${x.diff} day${x.diff>1?'s':''}`:'🎉 Today'}: ${esc(x.n)} <span class="text-xs opacity-60">${x.dt.toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span></div>
-    <div class="text-sm opacity-80">${can.length?'✅ Ready: '+can.map(e=>esc(e.r.name)).join(', '):''}${one.length?(can.length?'<br>':'')+'🛒 '+one.map(e=>`${esc(e.r.name)} — buy ${esc(e.m[0])}`).join('; '):''}${!can.length&&!one.length?'Missing several ingredients for '+ev.map(e=>esc(e.r.name)).join(', '):''}</div></div>`}).join('');
+    <div class="text-sm opacity-80">${can.length?'✅ Ready: '+fewN(can.map(e=>e.r.name)):''}${one.length?(can.length?'<br>':'')+'🛒 '+one.slice(0,6).map(e=>`${esc(e.r.name)} — buy ${esc(e.m[0])}`).join('; '):''}${!can.length&&!one.length?'Missing several ingredients for '+fewN(ev.map(e=>e.r.name)):''}</div></div>`}).join('');
 }
 
 /* ---------- STATE ---------- */
@@ -449,17 +453,19 @@ function renderMenu(){
   $('#filters').innerHTML=[['all','All'],['make','✅ Can Make'],['one','🛒 Missing 1'],['season','Seasonal']].map(([k,v])=>`<button class="btn2 ${k===filter?'on':''}" data-f="${k}">${v}</button>`).join('');
   const list=allR().map(r=>({r,e:evalR(r)})), seas=list.filter(x=>x.r.seasons.some(inS));
   const inSeason=season==='all-year'?[]:items.filter(i=>i.seasons?.includes(season)).map(i=>i.name);
-  $('#seasonNote').innerHTML=`<b>${SEASONS[season]} — ready now:</b> ${seas.filter(x=>!x.e.missing.length).map(x=>esc(x.r.name)).join(', ')||'none yet'}
-   <br><span class="opacity-70">Within reach: ${seas.filter(x=>x.e.missing.length===1).map(x=>esc(x.r.name)).join(', ')||'—'}${inSeason.length?' · In-season ingredients: '+inSeason.map(esc).join(', '):''}</span>`;
-  const shown=list.filter(({r,e})=>filter==='all'||(filter==='make'&&!e.missing.length)||(filter==='one'&&e.missing.length===1)||(filter==='season'&&r.seasons.some(inS)))
+  $('#seasonNote').innerHTML=`<b>${SEASONS[season]} — ready now:</b> ${few(seas.filter(x=>!x.e.missing.length))||'none yet'}
+   <br><span class="opacity-70">Within reach: ${few(seas.filter(x=>x.e.missing.length===1))||'—'}${inSeason.length?' · In-season ingredients: '+inSeason.map(esc).join(', '):''}</span>`;
+  const q=lc($('#rSearch').value),shown=list.filter(({r,e})=>(!q||lc(r.name).includes(q)||r.ingredients.some(g=>lc(g.category).includes(q)))&&(filter==='all'||(filter==='make'&&!e.missing.length)||(filter==='one'&&e.missing.length===1)||(filter==='season'&&r.seasons.some(inS))))
     .sort((a,b)=>a.e.missing.length-b.e.missing.length||(!!dmap[b.r.id]-!!dmap[a.r.id])||(b.r.seasons.some(inS)-a.r.seasons.some(inS))||a.r.name.localeCompare(b.r.name));
-  $('#recipes').innerHTML=shown.map(({r,e})=>{
+  $('#recipes').innerHTML=shown.slice(0,MAXR).map(({r,e})=>{
     const n=e.missing.length, badge=!n?'<span class="text-emerald-500 text-xs font-semibold">✅ Can make</span>':n===1?`<span class="text-amber-500 text-xs font-semibold">🛒 Buy: ${esc(e.missing[0])}</span>`:`<span class="text-xs opacity-50">Missing ${n}</span>`;
-    return `<div class="card !mb-0 ${n>1?'opacity-70':''}"><div class="flex justify-between gap-2"><h3 class="font-semibold">${esc(r.name)} ${r.seasons.some(inS)?SEASONS[season].split(' ')[0]:''}${dmap[r.id]?` <span class="text-xs text-fuchsia-500">🎉 ${dmap[r.id].diff?'in '+dmap[r.id].diff+'d':'today'}</span>`:''}</h3>${badge}</div>
-    <div class="text-xs opacity-60 mb-2">${[r.glassware,r.preparationMethod,(r.tags||[]).join(', ')].filter(Boolean).map(esc).join(' · ')}${r._c?` · custom <button data-dr="${esc(r.id)}" class="text-red-500 ml-1">delete</button>`:''}</div>
+    return `<div class="card !mb-0 ${n>1?'opacity-70':''}">${r.image?`<img src="${esc(r.image)}${r.image.includes('thecocktaildb')?'/small':''}" alt="" loading="lazy" class="w-14 h-14 rounded-lg object-cover float-left mr-3 mb-1" onerror="this.remove()">`:''}<div class="flex justify-between gap-2"><h3 class="font-semibold">${esc(r.name)} ${r.seasons.some(inS)?SEASONS[season].split(' ')[0]:''}${dmap[r.id]?` <span class="text-xs text-fuchsia-500">🎉 ${dmap[r.id].diff?'in '+dmap[r.id].diff+'d':'today'}</span>`:''}</h3>${badge}</div>
+    <div class="text-xs opacity-60 mb-2">${[r.glassware,r.preparationMethod,(r.tags||[]).join(', ')].filter(Boolean).map(esc).join(' · ')}${r._c?` · ${r.tags?.includes('imported')?'imported':'custom'} <button data-dr="${esc(r.id)}" class="text-red-500 ml-1">delete</button>`:''}</div>
     <ul class="text-sm space-y-0.5">${e.res.map(g=>`<li>${g.ok?(g.how==='sub'?'↔️':'✓'):(g.isOptional?'◦':'✗')} ${g.unit==='top-up'?'top up':esc(g.amount+' '+(g.unit==='count'?'':g.unit))} ${esc(g.category)}${g.isOptional?' <span class="opacity-50">(opt)</span>':''}${g.by?` <span class="text-xs ${g.how==='sub'?'text-sky-500':'opacity-50'}">${g.how==='sub'?'sub: ':''}${esc(g.by.name)}</span>`:''}</li>`).join('')}</ul>
     <ol class="text-xs mt-2 opacity-70 list-decimal list-inside">${(r.instructions||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
-    ${r.garnish?`<p class="text-xs mt-1 opacity-60">Garnish: ${esc(r.garnish)}</p>`:''}</div>`}).join('')||'<p class="opacity-60 text-sm">No cocktails match this filter.</p>';
+    ${r.garnish?`<p class="text-xs mt-1 opacity-60">Garnish: ${esc(r.garnish)}</p>`:''}${r.imageCredit?`<p class="text-[10px] mt-1 opacity-40">Photo: ${esc(r.imageCredit)}</p>`:''}</div>`}).join('')||'<p class="opacity-60 text-sm">No cocktails match this filter.</p>';
+  if(shown.length>MAXR)$('#recipes').insertAdjacentHTML('beforeend',`<p class="text-sm opacity-60 md:col-span-2">Showing ${MAXR} of ${shown.length} — search or filter to narrow it down.</p>`);
+  const ni=custom.filter(r=>r.tags?.includes('imported')).length;$('#rmCdb').classList.toggle('hidden',!ni);$('#impCdb').textContent=ni?`⟳ Re-import (${ni})`:'⬇ Import 100s of cocktails';
 }
 $('#menu').addEventListener('click',e=>{
   const d=e.target.dataset;
@@ -474,6 +480,90 @@ $('#recForm').onsubmit=e=>{
   try{const j=JSON.parse(e.target.json.value),n=addRecipes([].concat(j));if(!n)throw 0;save();renderAll();e.target.reset();alert(`Saved ${n} recipe(s).`);}
   catch{alert('Invalid CocktailRecipe JSON — needs id, name, ingredients[], instructions[], seasons[].');}
 };
+
+/* ---------- IMPORT FROM THECOCKTAILDB (free key "1", personal use) ----------
+   Pulls every cocktail by first letter (a–z, 0–9), converts each to the CocktailRecipe schema and saves them tagged "imported". */
+const CDB='https://www.thecocktaildb.com/api/json/v1/1/';
+const CDB_CAT={'light rum':'White Rum','white rum':'White Rum','rum':'White Rum','gold rum':'White Rum','añejo rum':'Dark Rum','dark rum':'Dark Rum','spiced rum':'Dark Rum','black rum':'Dark Rum',
+ 'bourbon':'Bourbon','whiskey':'Bourbon','blended whiskey':'Bourbon','rye whiskey':'Rye Whiskey','scotch':'Scotch','blended scotch':'Scotch','whisky':'Scotch','irish whiskey':'Irish Whiskey',
+ 'tequila':'Tequila','gin':'Gin','vodka':'Vodka','triple sec':'Orange Liqueur','cointreau':'Orange Liqueur','grand marnier':'Orange Liqueur','orange liqueur':'Orange Liqueur','orange curacao':'Orange Liqueur',
+ 'kahlua':'Coffee Liqueur','coffee liqueur':'Coffee Liqueur','campari':'Campari','aperol':'Aperol','sweet vermouth':'Sweet Vermouth','vermouth':'Sweet Vermouth','dry vermouth':'Dry Vermouth',
+ 'prosecco':'Prosecco','champagne':'Prosecco','angostura bitters':'Angostura Bitters','bitters':'Angostura Bitters','lime juice':'Lime Juice','lime':'Lime Juice','lemon juice':'Lemon Juice','lemon':'Lemon Juice',
+ 'sugar syrup':'Simple Syrup','simple syrup':'Simple Syrup','soda water':'Soda Water','club soda':'Soda Water','carbonated water':'Soda Water','tonic water':'Tonic Water','ginger beer':'Ginger Beer','ginger ale':'Ginger Ale',
+ 'cranberry juice':'Cranberry Juice','apple cider':'Apple Cider','heavy cream':'Heavy Cream','cream':'Heavy Cream','egg white':'Egg White','coffee':'Coffee','espresso':'Espresso','mint':'Mint',
+ 'orange':'Orange','orange peel':'Orange','cherry':'Cherry','maraschino cherry':'Cherry','salt':'Salt','honey':'Honey Syrup','clamato juice':'Clamato','worcestershire sauce':'Worcestershire Sauce',
+ 'tabasco sauce':'Hot Sauce','celery salt':'Celery Salt','ice':'Ice','water':'Water','hot water':'Hot Water','cinnamon':'Cinnamon'};
+const CDB_SUB={'Bourbon':'Rye Whiskey','Rye Whiskey':'Bourbon','Scotch':'Bourbon','Irish Whiskey':'Bourbon','Dark Rum':'White Rum','Ginger Beer':'Ginger Ale','Espresso':'Coffee','Honey Syrup':'Simple Syrup','Sugar':'Simple Syrup','Lemon Juice':'Lime Juice'};
+const GARNISH=/garnish|peel|twist|wedge|slice|wheel|olive|nutmeg|^ice$|^salt$|cherry|cinnamon/i;
+const titleCase=t=>t.replace(/\b\w/g,c=>c.toUpperCase());
+// "1 1/2 oz" → 1.5 oz, "2 cl" → 20 ml, "1 shot" → 1.5 oz, "Juice of 1/2" → 0.5 count, "Top" → top-up
+function parseMeasure(m){
+  m=lc(m);const x=m.match(/(\d+)\s+(\d+)\/(\d+)|(\d+)\/(\d+)|(\d+(?:\.\d+)?)/)||[],a=x[1]?+x[1]+x[2]/x[3]:x[4]?x[4]/x[5]:+x[6]||1;
+  if(!m)return{amount:1,unit:'count'};
+  if(/top|fill/.test(m))return{amount:1,unit:'top-up'};
+  if(/\bcl\b/.test(m))return{amount:+(a*10).toFixed(1),unit:'ml'};
+  if(/\bml\b/.test(m))return{amount:a,unit:'ml'};
+  if(/shot|jigger/.test(m))return{amount:+(a*1.5).toFixed(2),unit:'oz'};
+  if(/cup/.test(m))return{amount:a*8,unit:'oz'};
+  if(/oz|part/.test(m))return{amount:+a.toFixed(2),unit:'oz'};
+  if(/tbl|tbsp/.test(m))return{amount:a,unit:'tbsp'};
+  if(/tsp|teaspoon/.test(m))return{amount:a,unit:'tsp'};
+  if(/dash|drop|splash/.test(m))return{amount:a,unit:'dash'};
+  return{amount:a,unit:'count'};
+}
+function convertDrink(d){
+  const text=lc([d.strDrink,d.strInstructions].join(' ')),ingredients=[];
+  for(let k=1;k<=15;k++){const raw=(d['strIngredient'+k]||'').trim();if(!raw)continue;const name=lc(raw),meas=d['strMeasure'+k]||'';
+    const cat=CDB_CAT[name]||titleCase(raw),base=items.find(i=>lc(i.category)===lc(cat));
+    const top=!meas.trim()&&/Soda Water|Tonic Water|Ginger Beer|Ginger Ale/.test(cat);
+    ingredients.push({ingredientId:base?.id||slug(raw),category:cat,...(top?{amount:1,unit:'top-up'}:parseMeasure(meas)),isOptional:GARNISH.test(name)||/garnish/i.test(meas),...(CDB_SUB[cat]?{substituteCategory:CDB_SUB[cat]}:{})});}
+  const ins=String(d.strInstructions||'').split(/(?<=\.)\s+/).map(x=>x.trim()).filter(Boolean);
+  const seasons=[];
+  if(/hot |coffee|toddy|eggnog|nutmeg|mulled|cocoa/.test(text))seasons.push('winter');
+  if(/apple|cider|pumpkin|cinnamon|maple/.test(text))seasons.push('fall');
+  if(/frozen|blend|punch|tropical|pineapple|coconut|watermelon|mint|spritz|lime/.test(text))seasons.push('summer');
+  if(/elderflower|cucumber|strawberr|lavender|rose/.test(text))seasons.push('spring');
+  return{id:'cdb-'+d.idDrink,name:d.strDrink,glassware:d.strGlass||'',
+    preparationMethod:/shake/.test(text)?'shaken':/stir/.test(text)?'stirred':/blend/.test(text)?'blended':/layer|float/.test(text)?'layered':'built',
+    seasons:seasons.length?seasons:['all-year'],ingredients,instructions:ins.length?ins:['Combine and serve.'],
+    tags:['imported',...String(d.strTags||'').split(',').map(x=>lc(x)).filter(Boolean),lc(d.strCategory||'')].filter(Boolean),image:d.strDrinkThumb||undefined};
+}
+async function importCocktails(){
+  const btn=$('#impCdb'),keys=[...'abcdefghijklmnopqrstuvwxyz0123456789'],found=[];let done=0;
+  btn.disabled=true;
+  const worker=async()=>{while(keys.length){const k=keys.shift();try{const j=await getJ(CDB+'search.php?f='+k);found.push(...(j.drinks||[]));}catch{}
+    $('#impMsg').textContent=`Importing… ${++done}/36 · ${found.length} cocktails found`;}};
+  await Promise.all([worker(),worker(),worker(),worker()]);
+  const names=new Set(SEED_RECIPES.map(r=>lc(r.name)).concat(custom.filter(r=>!r.id.startsWith('cdb-')).map(r=>lc(r.name))));
+  const add=found.map(convertDrink).filter(r=>r.ingredients.length&&!names.has(lc(r.name)));
+  custom=custom.filter(r=>!r.id.startsWith('cdb-')).concat(add);save();
+  let ok=true;try{ok=JSON.parse(localStorage.getItem('bar2_recipes')||'[]').length===custom.length;}catch{ok=false;}
+  btn.disabled=false;
+  $('#impMsg').textContent=found.length?`✓ Imported ${add.length} cocktails from TheCocktailDB${ok?'':' — but your browser storage is full, so they won\'t survive a reload'}.`:'Could not reach TheCocktailDB — check your connection and try again.';
+  renderAll();
+}
+$('#impCdb').onclick=importCocktails;
+/* Bar Assistant recipes (MIT, github.com/bar-assistant/data) — pre-converted to CocktailRecipe in bar-assistant-recipes.json next to index.html.
+   These take priority: TheCocktailDB copies of the same drink are replaced. */
+$('#impBa').onclick=async()=>{
+  const btn=$('#impBa');btn.disabled=true;$('#impMsg').textContent='Loading Bar Assistant recipes…';
+  try{
+    const j=await getJ('bar-assistant-recipes.json'),list=(j.recipes||[]).filter(validRecipe);
+    const keep=new Set(SEED_RECIPES.map(r=>lc(r.name)).concat(custom.filter(r=>!r.tags?.includes('imported')).map(r=>lc(r.name))));
+    const add=list.filter(r=>!keep.has(lc(r.name))).map(r=>({...r,ingredients:r.ingredients.map(g=>{const b=items.find(i=>lc(i.category)===lc(g.category));return b?{...g,ingredientId:b.id}:g;})}));
+    const baNames=new Set(add.map(r=>lc(r.name))),before=custom.length;
+    custom=custom.filter(r=>!r.id.startsWith('ba-')&&!(r.id.startsWith('cdb-')&&baNames.has(lc(r.name)))).concat(add);save();
+    let ok=true;try{ok=JSON.parse(localStorage.getItem('bar2_recipes')||'[]').length===custom.length;}catch{ok=false;}
+    $('#impMsg').textContent=`✓ Added ${add.length} Bar Assistant cocktails (MIT licence).${ok?'':' Browser storage is full — they won\'t survive a reload.'}`;
+  }catch{$('#impMsg').textContent='Could not load bar-assistant-recipes.json — make sure it is uploaded next to index.html.';}
+  btn.disabled=false;renderAll();
+};
+$('#rmCdb').onclick=()=>{const n=custom.filter(r=>r.tags?.includes('imported')).length;
+  if(n&&confirm(`Remove all ${n} imported cocktails? Your own custom recipes are kept.`)){custom=custom.filter(r=>!r.tags?.includes('imported'));save();$('#impMsg').textContent=`Removed ${n} imported cocktails.`;renderAll();}};
+$('#rSearch').oninput=()=>renderMenu();
+const MAXR=120;
+function fewN(names,k=10){return names.slice(0,k).map(esc).join(', ')+(names.length>k?` +${names.length-k} more`:'');}
+const few=arr=>fewN(arr.map(x=>x.r.name),12);
 
 /* ---------- ADVISOR (by category) ---------- */
 function renderRestock(){
