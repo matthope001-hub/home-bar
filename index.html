@@ -341,8 +341,10 @@ async function handleUPC(code){
   const p=await lookupProduct(code), f=$('#addForm');resetForm();f.upc.value=code;
   if(p){
     const cat=mapCategory(p.name,p.tags);
+    p.brand||=guessBrand(p.name);p.name=cleanName(p.name)||p.name;
     f.name.value=p.name;f.brand.value=p.brand;
-    if(p.abv)f.abv.value=p.abv;
+    const estAbv=!p.abv&&TYPICAL_ABV[cat];
+    if(p.abv||estAbv)f.abv.value=p.abv||estAbv;
     f.type.value=cat==='Angostura Bitters'||p.tags.some(t=>t.includes('bitters'))?'bitters'
       :(p.abv||SPIRIT_CATS.has(cat)||p.tags.some(t=>/alcoholic beverage|spirit|liquor|liqueur|wine/.test(t)&&!t.includes('non-alcoholic')))?'alcohol':'mixer';
     if(cat)f.category.value=cat;
@@ -352,13 +354,28 @@ async function handleUPC(code){
     const match=cat&&p.brand&&items.find(i=>lc(i.category)===lc(cat)&&(lc(i.brand).includes(lc(p.brand))||lc(p.brand).includes(lc(i.brand||'~'))));
     if(match)f.link.value=match.id;
     const missing=['category','abv','vol'].filter(k=>!f[k].value).map(k=>({abv:'ABV',vol:'size'}[k]||k));
-    msg(`Found on ${p.src}${match?` — looks like ${match.name}. Tap Save to link this barcode.`:'.'}${missing.length?' Please fill in: '+missing.join(', ')+'.':' Check the details and save.'}`);
+    msg(`Found on ${p.src}${match?` — looks like ${match.name}. Tap Save to link this barcode.`:'.'}${estAbv?` ABV ${estAbv}% is the typical value for ${cat} — check the label.`:''}${missing.length?' Please fill in: '+missing.join(', ')+'.':' Check the details and save.'}`);
   } else msg('Not found online — enter the details once or link it to an existing item; it\'ll be remembered.');
   openM();f.link.focus();
 }
 // Lookup chain: Open Food Facts first, then UPCitemdb (free trial, ~100 lookups/day) to fill whatever is still missing.
 const SPIRIT_CATS=new Set(['White Rum','Dark Rum','Bourbon','Rye Whiskey','Scotch','Islay Scotch','Irish Whiskey','Tequila','Gin','Vodka','Orange Liqueur','Coffee Liqueur','Campari','Aperol','Sweet Vermouth','Dry Vermouth','Prosecco']);
 const parseMl=t=>{const q=String(t||'').match(/([\d.]+)\s*(ml|cl|l|litres?|liters?)\b/i);return q?Math.round(+q[1]*({ml:1,cl:10}[lc(q[2])]||1000)):undefined;};
+// typical ABV by category, used only when no source gives one (shown to the user as an estimate)
+const TYPICAL_ABV={'White Rum':40,'Dark Rum':40,'Bourbon':40,'Rye Whiskey':40,'Scotch':40,'Islay Scotch':40,'Irish Whiskey':40,'Tequila':40,'Gin':40,'Vodka':40,'Orange Liqueur':40,'Coffee Liqueur':20,'Campari':25,'Aperol':11,'Sweet Vermouth':15,'Dry Vermouth':17,'Prosecco':11,'Angostura Bitters':44.7};
+// strip size / ABV text from a product title: "Bombay Sapphire London Dry 1140ML" → "Bombay Sapphire London Dry"
+const cleanName=t=>String(t||'').replace(/\s*\b[\d.]+\s*(ml|cl|l|litres?|liters?)\b/ig,'').replace(/\s*\d{1,2}(\.\d)?\s*%(\s*abv)?/ig,'').replace(/\s{2,}/g,' ').trim();
+// brand = leading words before the first style/category word: "Bombay Sapphire London Dry" → "Bombay Sapphire"
+const KNOWN_BRANDS=["Canada Dry","Smirnoff","Absolut","Grey Goose","Ketel One","Belvedere","Stolichnaya","Tito's","Bombay Sapphire","Hendrick's","Beefeater","Gordon's","Tanqueray","Bacardi","Captain Morgan","Havana Club","Appleton","Kraken","Sailor Jerry","Goslings","Jameson","Crown Royal","Canadian Club","Wiser's","Forty Creek","Lot No. 40","Jack Daniel's","Jim Beam","Wild Turkey","Bulleit","Maker's Mark","Buffalo Trace","Woodford Reserve","Johnnie Walker","Glenfiddich","Monkey Shoulder","Laphroaig","Jose Cuervo","Patrón","Don Julio","Espolòn","Casamigos","Olmeca","Cointreau","Grand Marnier","Kahlúa","Baileys","Disaronno","Campari","Aperol","Martini","Cinzano","Dolin","Angostura","Fever-Tree","Schweppes","Q Mixers","Coca-Cola","Pepsi","Sprite","7UP","Mott's","Lea & Perrins","Tabasco","ReaLemon","ReaLime"];
+const plain=t=>lc(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[’']/g,"'");
+// brand: longest known brand (built-in list + brands already in your catalog) found in the title; otherwise leading words before the first style word
+function guessBrand(name){
+  const t=plain(name),known=[...new Set([...KNOWN_BRANDS,...items.map(i=>i.brand).filter(Boolean)])].sort((x,y)=>y.length-x.length).find(k=>t.includes(plain(k)));
+  if(known)return known;
+  const w=cleanName(name).split(/\s+/),stop=/^(london|dry|gin|vodka|rum|white|dark|spiced|black|gold|silver|blanco|reposado|a[nñ]ejo|tequila|whisk(e)?y|bourbon|rye|scotch|single|blended|kentucky|straight|irish|canadian|vermouth|liqueur|triple|sec|superior|premium|original|classic|extra|aged|tonic|soda|ginger|club|no\.?|\d.*)$/i;
+  const b=[];for(const x of w){if(stop.test(x)||b.length===3)break;b.push(x);}
+  return b.length&&b.length<w.length?b.join(' '):'';
+}
 const parseAbv=t=>{const m=String(t||'').match(/(\d{1,2}(?:\.\d)?)\s*%/);return m?+m[1]:undefined;};
 async function lookupProduct(code){
   const o={name:'',brand:'',tags:[],src:[]};
