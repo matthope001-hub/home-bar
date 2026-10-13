@@ -39,16 +39,17 @@ html{-webkit-tap-highlight-color:transparent}button,select,label{touch-action:ma
 <nav class="fixed bottom-0 inset-x-0 z-10 flex text-xs bg-white/95 dark:bg-stone-900/95 border-t border-stone-200 dark:border-stone-800 safe-b
             sm:sticky sm:top-[57px] sm:bottom-auto sm:border-t-0 sm:border-b sm:text-sm sm:gap-5 sm:px-[max(1rem,calc((100%-56rem)/2+1rem))]">
   <button class="tab on" data-t="bar"><span class="block text-xl sm:hidden">🍾</span>My Bar</button>
-  <button class="tab" data-t="menu"><span class="block text-xl sm:hidden">🍸</span>Cocktails</button>
+  <button class="tab relative" data-t="menu"><span class="block text-xl sm:hidden">🍸</span>Cocktails <span id="mkBadge" class="hidden ml-0.5 px-1.5 rounded-full bg-emerald-600 text-white text-[10px] align-middle"></span></button>
   <button class="tab" data-t="restock"><span class="block text-xl sm:hidden">🛒</span>Restock</button>
 </nav>
 
+<button id="fabScan" class="sm:hidden fixed right-4 z-20 w-14 h-14 rounded-full bg-amber-500 text-stone-950 text-2xl shadow-lg shadow-black/40" style="bottom:calc(76px + env(safe-area-inset-bottom))" title="Scan a barcode">📷</button>
 <main class="max-w-4xl mx-auto p-4 pb-28 sm:pb-6">
 <!-- MY BAR -->
 <section id="bar">
   <div class="card">
     <div class="flex flex-wrap gap-2 items-center">
-      <button id="scanBtn" class="btn">📷 Scan Barcode</button>
+      <button id="scanBtn" class="btn">📷 Scan Barcode</button><button id="torchBtn" class="btn2 hidden" title="Flashlight">🔦</button>
       <input id="upcIn" class="inp flex-1 min-w-[140px]" placeholder="…or type UPC/EAN" inputmode="numeric">
       <button id="upcGo" class="btn2">Look up</button>
       <button id="openAdd" class="btn2">➕ Add item</button>
@@ -59,7 +60,7 @@ html{-webkit-tap-highlight-color:transparent}button,select,label{touch-action:ma
   </div>
 
   <div id="addBox" class="hidden fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center sm:p-4">
-   <div class="card w-full max-w-md !mb-0 max-h-[90vh] overflow-y-auto rounded-b-none sm:rounded-xl safe-b">
+   <div class="card w-full max-w-md !mb-0 max-h-[85dvh] overflow-y-auto rounded-b-none sm:rounded-xl safe-b">
     <div class="flex justify-between items-center"><h2 id="addTitle" class="font-semibold">➕ Add item / map a barcode</h2><button id="closeAdd" class="btn2 !px-2 !py-0.5">✕</button></div>
     <form id="addForm" class="grid grid-cols-2 gap-2 mt-3">
       <input type="hidden" name="editId">
@@ -74,6 +75,7 @@ html{-webkit-tap-highlight-color:transparent}button,select,label{touch-action:ma
       <input name="image" class="inp col-span-2" placeholder="Photo link (optional — filled in automatically when found)">
       <img id="addImg" alt="" class="hidden col-span-2 h-28 object-contain mx-auto rounded" onerror="this.classList.add('hidden')">
       <button class="btn col-span-2">Save</button>
+      <button type="button" id="delItem" class="hidden col-span-2 text-red-500 text-sm py-2">Delete this item from the catalog</button>
       <p class="text-xs opacity-60 col-span-2">Choosing an existing item adds this barcode to its UPC list (e.g. 750 ml vs 1 L).</p>
     </form>
     <datalist id="cats"></datalist>
@@ -256,11 +258,13 @@ if(!items)items=SEEDS;else SEEDS.forEach(s=>{if(!seen.has(s.id)&&!items.some(i=>
 LS.set('bar2_seen',SEEDS.map(s=>s.id));
 let custom=LS.get('bar2_recipes',[]);
 let filter='all', season=LS.get('bar2_season',null)||['winter','winter','spring','spring','spring','summer','summer','summer','fall','fall','fall','winter'][new Date().getMonth()];
-const save=()=>{LS.set('bar2_items',items);LS.set('bar2_recipes',custom);LS.set('bar2_season',season);};
+let savedCustom=custom,ver=0;
+const save=()=>{ver++;LS.set('bar2_items',items);LS.set('bar2_season',season);if(custom!==savedCustom){LS.set('bar2_recipes',custom);savedCustom=custom;}};
 const allR=()=>[...SEED_RECIPES.filter(r=>!custom.some(c=>c.id===r.id)),...custom.map(r=>({...r,_c:1}))];
 
 /* ---------- MATCHING: ingredientId → category → validSubstitutes → substituteCategory ---------- */
-const stocked=()=>items.filter(i=>i.isBarstocked&&i.stockLevel!=='empty');
+let _st,_stv=-1;const stocked=()=>{if(_stv!==ver){_st=items.filter(i=>i.isBarstocked&&i.stockLevel!=='empty');_stv=ver;}return _st;};
+const evalCache=new Map();let evalVer=-1;
 function check(g){
   if(ALWAYS.has(lc(g.category)))return{ok:1};
   const S=stocked(), base=items.find(i=>i.id===g.ingredientId);
@@ -270,7 +274,8 @@ function check(g){
   if(g.substituteCategory){m=S.find(i=>lc(i.category)===lc(g.substituteCategory)); if(m)return{ok:1,by:m,how:'sub'};}
   return{ok:0};
 }
-function evalR(r){const res=r.ingredients.map(g=>({...g,...check(g)}));return{res,missing:[...new Set(res.filter(g=>!g.isOptional&&!g.ok).map(g=>g.category))]}}
+function evalR(r){if(evalVer!==ver){evalCache.clear();evalVer=ver;}const c=evalCache.get(r.id);if(c)return c;const out=evalR0(r);evalCache.set(r.id,out);return out;}
+function evalR0(r){const res=r.ingredients.map(g=>({...g,...check(g)}));return{res,missing:[...new Set(res.filter(g=>!g.isOptional&&!g.ok).map(g=>g.category))]}}
 
 /* ---------- INVENTORY UI ---------- */
 const stCol={full:'text-emerald-500',low:'text-amber-500',empty:'text-red-500'};
@@ -279,8 +284,7 @@ const row=i=>`<li class="flex items-center gap-2 py-2 border-b border-stone-200 
  <div class="flex-1 min-w-0 cursor-pointer" data-e="${esc(i.id)}" title="Tap to edit"><div class="font-medium truncate">${esc(i.name)} <span class="opacity-40 text-xs">✎</span></div>
  <div class="text-xs opacity-60 truncate">${esc(i.category)}${i.brand?' · '+esc(i.brand):''}${i.abv?' · '+i.abv+'%':''}${i.volumeMl?' · '+fmtVol(i.volumeMl):''}${i.upc?.length?' · '+i.upc.length+' UPC':''}</div></div>
  <select data-s="${esc(i.id)}" class="inp !w-20 !px-1 ${stCol[i.stockLevel]}">${['full','low','empty'].map(s=>`<option value="${s}" ${i.stockLevel===s?'selected':''}>${s}</option>`).join('')}</select>
- <button data-r="${esc(i.id)}" class="btn2 !px-2 !py-0.5" title="Remove from bar">↓</button>
- <button data-x="${esc(i.id)}" class="text-red-500 px-1" title="Delete from catalog">✕</button></li>`;
+ <button data-r="${esc(i.id)}" class="btn2 !px-2 !py-0.5" title="Remove from bar">↓</button></li>`;
 function renderBar(){
   const st=items.filter(i=>i.isBarstocked).sort((a,b)=>a.name.localeCompare(b.name)), grp=i=>i.type==='ice'?'garnish':i.type;
   ['alcohol','mixer','bitters','garnish'].forEach(g=>$('#list-'+g).innerHTML=st.filter(i=>grp(i)===g).map(row).join('')||'<li class="text-sm opacity-60">Nothing yet.</li>');
@@ -322,24 +326,28 @@ $('#addForm').onsubmit=e=>{
   resetForm();closeM();save();renderAll();
 };
 $('#openAdd').onclick=()=>{resetForm();openM();};
-function resetForm(title='➕ Add item / map a barcode'){const f=$('#addForm');f.reset();f.editId.value='';f.link.classList.remove('hidden');$('#addImg').classList.add('hidden');$('#addTitle').textContent=title;}
-function openEdit(id){const i=byId(id),f=$('#addForm');resetForm('✎ Edit item');f.editId.value=id;f.link.classList.add('hidden');
+function resetForm(title='➕ Add item / map a barcode'){const f=$('#addForm');f.reset();f.editId.value='';f.link.classList.remove('hidden');$('#delItem').classList.add('hidden');$('#addImg').classList.add('hidden');$('#addTitle').textContent=title;}
+function openEdit(id){const i=byId(id),f=$('#addForm');resetForm('✎ Edit item');f.editId.value=id;f.link.classList.add('hidden');$('#delItem').classList.remove('hidden');
   ['name','category','type','brand','abv','image'].forEach(k=>f[k].value=i[k]??'');setVol(f,i.volumeMl);showImg(i.image);openM();f.type.focus();}
 $('#closeAdd').onclick=closeM;
+$('#delItem').onclick=()=>{const i=byId($('#addForm').editId.value);if(!i||!confirm(`Delete "${i.name}" from the catalog (and its barcode mappings)?`))return;items=items.filter(x=>x!==i);closeM();save();renderAll();msg(`Deleted ${i.name}.`);};
+$('#fabScan').onclick=()=>{window.scrollTo({top:0,behavior:'smooth'});if(!scanner)$('#scanBtn').click();};
+$('#torchBtn').onclick=async()=>{try{torchOn=!torchOn;await scanner.applyVideoConstraints({advanced:[{torch:torchOn}]});$('#torchBtn').classList.toggle('on',torchOn);}catch{torchOn=false;}};
 $('#addForm').image.oninput=e=>showImg(e.target.value.trim());
 $('#addBox').onclick=e=>{if(e.target.id==='addBox')closeM();};
 
 /* ---------- SCANNER ---------- */
 const msg=t=>$('#msg').textContent=t;
-let scanner=null;
-async function stopScan(){if(scanner){try{await scanner.stop();scanner.clear();}catch{}scanner=null;}$('#scanBtn').textContent='📷 Scan Barcode';}
+let scanner=null,torchOn=false;
+async function stopScan(){if(scanner){try{await scanner.stop();scanner.clear();}catch{}scanner=null;}$('#scanBtn').textContent='📷 Scan Barcode';torchOn=false;$('#torchBtn').classList.add('hidden');$('#torchBtn').classList.remove('on');}
 $('#scanBtn').onclick=async()=>{
   if(scanner)return stopScan();
   if(typeof Html5Qrcode==='undefined')return msg('Scanner library failed to load (offline?). Type the UPC instead.');
   const F=Html5QrcodeSupportedFormats;
   scanner=new Html5Qrcode('reader',{formatsToSupport:[F.UPC_A,F.UPC_E,F.EAN_13,F.EAN_8],verbose:false});
   try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:(w,h)=>({width:Math.floor(Math.min(w*0.9,340)),height:Math.floor(Math.min(h*0.45,150))})},async c=>{navigator.vibrate?.(80);await stopScan();handleUPC(c);});
-    $('#scanBtn').textContent='■ Stop';msg('Point the camera at a barcode…');}
+    $('#scanBtn').textContent='■ Stop';msg('Point the camera at a barcode…');$('#reader').scrollIntoView({behavior:'smooth',block:'center'});
+    try{if(scanner.getRunningTrackCapabilities?.().torch)$('#torchBtn').classList.remove('hidden');}catch{}}
   catch(err){scanner=null;msg('Camera unavailable: '+err+' — needs HTTPS or localhost.');}
 };
 $('#upcGo').onclick=()=>{const c=$('#upcIn').value.trim();if(c)handleUPC(c);};
@@ -457,20 +465,21 @@ function renderMenu(){
    <br><span class="opacity-70">Within reach: ${few(seas.filter(x=>x.e.missing.length===1))||'—'}${inSeason.length?' · In-season ingredients: '+inSeason.map(esc).join(', '):''}</span>`;
   const q=lc($('#rSearch').value),shown=list.filter(({r,e})=>(!q||lc(r.name).includes(q)||r.ingredients.some(g=>lc(g.category).includes(q)))&&(filter==='all'||(filter==='make'&&!e.missing.length)||(filter==='one'&&e.missing.length===1)||(filter==='season'&&r.seasons.some(inS))))
     .sort((a,b)=>a.e.missing.length-b.e.missing.length||(!!dmap[b.r.id]-!!dmap[a.r.id])||(b.r.seasons.some(inS)-a.r.seasons.some(inS))||a.r.name.localeCompare(b.r.name));
-  $('#recipes').innerHTML=shown.slice(0,MAXR).map(({r,e})=>{
+  $('#recipes').innerHTML=shown.slice(0,menuMax).map(({r,e})=>{
     const n=e.missing.length, badge=!n?'<span class="text-emerald-500 text-xs font-semibold">✅ Can make</span>':n===1?`<span class="text-amber-500 text-xs font-semibold">🛒 Buy: ${esc(e.missing[0])}</span>`:`<span class="text-xs opacity-50">Missing ${n}</span>`;
     return `<div class="card !mb-0 ${n>1?'opacity-70':''}">${r.image?`<img src="${esc(r.image)}${r.image.includes('thecocktaildb')?'/small':''}" alt="" loading="lazy" class="w-14 h-14 rounded-lg object-cover float-left mr-3 mb-1" onerror="this.remove()">`:''}<div class="flex justify-between gap-2"><h3 class="font-semibold">${esc(r.name)} ${r.seasons.some(inS)?SEASONS[season].split(' ')[0]:''}${dmap[r.id]?` <span class="text-xs text-fuchsia-500">🎉 ${dmap[r.id].diff?'in '+dmap[r.id].diff+'d':'today'}</span>`:''}</h3>${badge}</div>
     <div class="text-xs opacity-60 mb-2">${[r.glassware,r.preparationMethod,(r.tags||[]).join(', ')].filter(Boolean).map(esc).join(' · ')}${r._c?` · ${r.tags?.includes('imported')?'imported':'custom'} <button data-dr="${esc(r.id)}" class="text-red-500 ml-1">delete</button>`:''}</div>
     <ul class="text-sm space-y-0.5">${e.res.map(g=>`<li>${g.ok?(g.how==='sub'?'↔️':'✓'):(g.isOptional?'◦':'✗')} ${g.unit==='top-up'?'top up':esc(g.amount+' '+(g.unit==='count'?'':g.unit))} ${esc(g.category)}${g.isOptional?' <span class="opacity-50">(opt)</span>':''}${g.by?` <span class="text-xs ${g.how==='sub'?'text-sky-500':'opacity-50'}">${g.how==='sub'?'sub: ':''}${esc(g.by.name)}</span>`:''}</li>`).join('')}</ul>
-    <ol class="text-xs mt-2 opacity-70 list-decimal list-inside">${(r.instructions||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
-    ${r.garnish?`<p class="text-xs mt-1 opacity-60">Garnish: ${esc(r.garnish)}</p>`:''}${r.imageCredit?`<p class="text-[10px] mt-1 opacity-40">Photo: ${esc(r.imageCredit)}</p>`:''}</div>`}).join('')||'<p class="opacity-60 text-sm">No cocktails match this filter.</p>';
-  if(shown.length>MAXR)$('#recipes').insertAdjacentHTML('beforeend',`<p class="text-sm opacity-60 md:col-span-2">Showing ${MAXR} of ${shown.length} — search or filter to narrow it down.</p>`);
+    <details class="mt-2"><summary class="text-xs opacity-70 cursor-pointer py-1">How to make it (${(r.instructions||[]).length} step${(r.instructions||[]).length===1?'':'s'})</summary><ol class="text-xs mt-1 opacity-70 list-decimal list-inside">${(r.instructions||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
+    ${r.garnish?`<p class="text-xs mt-1 opacity-60">Garnish: ${esc(r.garnish)}</p>`:''}${r.imageCredit?`<p class="text-[10px] mt-1 opacity-40">Photo: ${esc(r.imageCredit)}</p>`:''}</details></div>`}).join('')||'<p class="opacity-60 text-sm">No cocktails match this filter.</p>';
+  if(shown.length>menuMax)$('#recipes').insertAdjacentHTML('beforeend',`<button data-more="1" class="btn2 w-full md:col-span-2">Show more (${shown.length-menuMax} left)</button>`);
   const ni=custom.filter(r=>r.tags?.includes('imported')).length;$('#rmCdb').classList.toggle('hidden',!ni);$('#impCdb').textContent=ni?`⟳ Re-import (${ni})`:'⬇ Import 100s of cocktails';
 }
 $('#menu').addEventListener('click',e=>{
   const d=e.target.dataset;
-  if(d.se){season=d.se;save();renderMenu();}
-  if(d.f){filter=d.f;renderMenu();}
+  if(d.se){season=d.se;menuMax=40;save();renderMenu();}
+  if(d.f){filter=d.f;menuMax=40;renderMenu();}
+  if(d.more){menuMax+=40;renderMenu();}
   if(d.dr){const r=custom.find(x=>x.id===d.dr);if(confirm(`Delete custom recipe "${r.name}"?`)){custom=custom.filter(x=>x!==r);save();renderAll();}}
 });
 const validRecipe=r=>r&&r.id&&r.name&&Array.isArray(r.ingredients)&&Array.isArray(r.instructions)&&Array.isArray(r.seasons)&&r.ingredients.every(g=>g.ingredientId&&g.category&&typeof g.amount==='number'&&g.unit);
@@ -560,8 +569,8 @@ $('#impBa').onclick=async()=>{
 };
 $('#rmCdb').onclick=()=>{const n=custom.filter(r=>r.tags?.includes('imported')).length;
   if(n&&confirm(`Remove all ${n} imported cocktails? Your own custom recipes are kept.`)){custom=custom.filter(r=>!r.tags?.includes('imported'));save();$('#impMsg').textContent=`Removed ${n} imported cocktails.`;renderAll();}};
-$('#rSearch').oninput=()=>renderMenu();
-const MAXR=120;
+let searchT;$('#rSearch').oninput=()=>{clearTimeout(searchT);searchT=setTimeout(()=>{menuMax=40;renderMenu();},200);};
+let menuMax=40;
 function fewN(names,k=10){return names.slice(0,k).map(esc).join(', ')+(names.length>k?` +${names.length-k} more`:'');}
 const few=arr=>fewN(arr.map(x=>x.r.name),12);
 
@@ -590,11 +599,15 @@ $('#imp').onchange=async e=>{
 };
 
 /* ---------- UI ---------- */
-const renderAll=()=>{renderBar();renderMenu();renderRestock();};
+let tab='bar',dirty={};const VIEWS={bar:()=>renderBar(),menu:()=>renderMenu(),restock:()=>renderRestock()};
+const renderAll=()=>{dirty={bar:1,menu:1,restock:1};VIEWS[tab]();dirty[tab]=0;updateBadge();};
+function updateBadge(){const n=allR().filter(r=>!evalR(r).missing.length).length,b=$('#mkBadge');b.textContent=n;b.classList.toggle('hidden',!n);}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));
   ['bar','menu','restock'].forEach(id=>$('#'+id).classList.toggle('hidden',id!==b.dataset.t));
   if(b.dataset.t!=='bar')stopScan();
+  tab=b.dataset.t;if(dirty[tab]){VIEWS[tab]();dirty[tab]=0;}
+  $('#fabScan').style.display=tab==='bar'?'':'none';
   window.scrollTo({top:0});
 });
 const setTheme=t=>{document.documentElement.classList.toggle('dark',t==='dark');LS.set('bar_theme',t);};

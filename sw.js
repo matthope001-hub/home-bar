@@ -1,5 +1,5 @@
 // Home Bar offline cache. Bump VERSION after changing index.html so phones pick up the new copy.
-const VERSION = 'homebar-v9';
+const VERSION = 'homebar-v10';
 const SHELL = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   'https://cdn.tailwindcss.com',
